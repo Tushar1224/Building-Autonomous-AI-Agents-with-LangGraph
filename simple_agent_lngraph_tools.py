@@ -32,22 +32,29 @@ class State(TypedDict):
     # (in this case, it appends messages to the list, rather than overwriting them)
     messages: Annotated[list, add_messages]
 
-
 graph_builder = StateGraph(State)
-
-# create tools
-tool = TavilySearchResults(max_results=2)
-tools = [tool]
-# rest = tool.invoke("What is the capital of France?")
-# print(rest)
-
-model_with_tools = model.bind_tools(tools)
 
 # Below, implement a BasicToolNode that checks the most recent
 # message in the state and calls tools if the message contains tool_calls
 import json
 from langchain_core.messages import ToolMessage
 from langgraph.prebuilt import ToolNode, tools_condition
+
+class BasicToolNode(ToolNode):
+    """A node that runs the tools requested in the most recent message."""
+    def __init__(self, tools):
+        self.tools_by_name = {tool.name: tool for tool in tools}
+
+    def __call__(self,inputs:dict):
+        if messages := inputs.get("messages", []):
+            message = messages[-1]
+        else:
+            raise ValueError("No messages found in state.")
+        outputs = []
+        for tool_call in message.tool_calls:
+            tool_response = self.tools_by_name[tool_call["name"]].invoke(tool_call["args"])
+            outputs.append(ToolMessage(content=json.dumps(tool_response), name=tool_call["name"], tool_call_id=tool_call["id"]))
+        return {"messages": outputs}
 
 
 def bot(state: State):
@@ -56,10 +63,44 @@ def bot(state: State):
     return {"messages": [model_with_tools.invoke(state["messages"])]}
 
 
+
+# create tools
+tool = TavilySearchResults(max_results=2)
+tools = [tool]
+# rest = tool.invoke("What is the capital of France?")
+# print(rest)
+
+
+
+model_with_tools = model.bind_tools(tools)
+# rest = model_with_tools.invoke("What's a 'node' in LangGraph?")
+# print(rest)
+
 # instantiate the ToolNode with the tools
 tool_node = ToolNode(tools=[tool])
+# tool_node = BasicToolNode(tools=[tool])
 graph_builder.add_node("tools", tool_node)  # Add the node to the graph
 
+from typing import Literal
+
+# def route_tools(state: State) -> Literal["tools", "__end__"]:
+#     """use in the conditional_edge to route to the ToolNode if the last message has tool calls. Otherwise , route to the end."""
+#     if isinstance(state,list):
+#         ai_messages = state[-1]
+#     elif messages:= state.get("messages", []):
+#         ai_messages = messages[-1]
+#     else:
+#         raise ValueError("No messages found in state.")
+#     if hasattr(ai_messages, "tool_calls") and ai_messages.tool_calls:
+#         return "tools"
+#     return "__end__"
+
+# graph_builder.add_conditional_edges(
+#     "bot",
+#     route_tools,
+#     {"tools": "tools", "__end__": "__end__"},
+# )
+    
 
 # The `tools_condition` function returns "tools" if the chatbot asks to use a tool, and "__end__" if
 # it is fine directly responding. This conditional routing defines the main agent loop.
